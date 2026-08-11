@@ -1,4 +1,5 @@
 import numpy as np
+import matplotlib.pyplot as plt
 
 
 def f(v):
@@ -38,14 +39,15 @@ v[0] = v_t0
 x[0] = x_t0
 
 for i in range(n):
-    v[i + 1] = v[i] + h * f(v[i])
-    x[i + 1] = x[i] + h * g(v[i])
+    x[i + 1] = x[i] + h * f(v[i])
+    v[i + 1] = v[i] + h * g(v[i])
     t[i + 1] = t[i] + h
 
-v_real = v_real(t)
-x_real = x_real(t)
-Ept_v = np.max(np.abs(np.abs(v_real - v) / v_real) * 100)
-Ept_x = np.max(np.abs(np.abs(x_real - x) / x_real) * 100)
-
-print(Ept_v)
-print(Ept_x)
+plt.figure()
+plt.plot(t_sol, v_sol, "-b", label="Solução exata")
+plt.plot(t, v, "-ok", label=f"Euler, h = {h}")
+plt.xlabel("t")
+plt.ylabel("v")
+plt.title(r"$v' = 9{,}81 - \dfrac{c_d}{m}v^2$")
+plt.legend()
+plt.show()
