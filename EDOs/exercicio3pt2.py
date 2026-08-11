@@ -56,6 +56,22 @@ for i in range(n):
 
     t[i + 1] = t[i] + h
 
+x_true = x_real(t)
+Ept_x = np.where(x_true != 0, np.abs((x_true - x) / x_true) * 100, 0)
+print(f"Ept_x máximo: {np.max(Ept_x):.6f}%")
+
+v_true = v_real(t)
+Ept_v = np.where(v_true != 0, np.abs(np.abs(v_true - v) / v_true) * 100, 0)
+print(f"Ept_v máximo: {np.max(Ept_v):.6f}%")
+
+plt.figure()
+plt.plot(t_sol, x_sol, "-b", label="Solução exata")
+plt.plot(t, x, "-ok", label=f"RK4, h = {h}")
+plt.xlabel("t")
+plt.ylabel("x")
+plt.title(r"$x' = v$")
+plt.legend()
+
 plt.figure()
 plt.plot(t_sol, v_sol, "-b", label="Solução exata")
 plt.plot(t, v, "-ok", label=f"RK4, h = {h}")
