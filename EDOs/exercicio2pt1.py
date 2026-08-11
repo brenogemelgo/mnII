@@ -1,4 +1,3 @@
-# Autor: Breno Vargas Gemelgo
 # Disciplina: Métodos Numéricos II
 # Aula 2 - Solução de EDOs, Exercício 2 (parte 1)
 
