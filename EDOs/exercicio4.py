@@ -14,20 +14,18 @@ def v_real(t):
 
 
 # dy/dt = v
-# dv/dt = f(t,y,v)
-
-
 def f(v):
     return v
 
 
+# dv/dt = -ky
 def g(k, y):
     return -k * y
 
 
 k = 1
 t_min = 0
-t_max = 10
+t_max = 2 * np.pi
 y_t0 = 1
 v_t0 = 1
 h = 1

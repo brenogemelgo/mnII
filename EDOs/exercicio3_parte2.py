@@ -1,5 +1,5 @@
 # Disciplina: Métodos Numéricos II
-# Aula 2 - Solução de EDOs, Exercício 3 (parte 1)
+# Aula 2 - Solução de EDOs, Exercício 3 (parte 2)
 
 import numpy as np
 import matplotlib.pyplot as plt
