@@ -1,18 +1,17 @@
 # Disciplina: Métodos Numéricos II
 # Aula 2 - Solução de EDOs, Exercício 2 (parte 2)
 
-
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 
 
+def y_real(t):
+    return 4 / 1.3 * (np.exp(0.8 * t) - np.exp(-0.5 * t)) + 2 * np.exp(-0.5 * t)
+
+
 def f(t, y):
     return 4 * np.exp(0.8 * t) - 0.5 * y
-
-
-def sol(t):
-    return 4 / 1.3 * (np.exp(0.8 * t) - np.exp(-0.5 * t)) + 2 * np.exp(-0.5 * t)
 
 
 t_min = 0
@@ -21,7 +20,7 @@ y_t0 = 2
 h = 1
 
 t_sol = np.linspace(t_min, t_max, 1000)
-y_sol = sol(t_sol)
+y_sol = y_real(t_sol)
 
 n = int((t_max - t_min) / h)
 
@@ -39,9 +38,9 @@ for i in range(n):
     y[i + 1] = y[i] + h / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
     t[i + 1] = t[i] + h
 
-y_real = sol(t)
-Ept = np.abs(np.abs(y_real - y) / y_real) * 100
-dados = pd.DataFrame({"t": t, "y RK4": y, "y exato": y_real, "Ept (%)": Ept})
+y_true = y_real(t)
+Ept = np.abs(np.abs(y_true - y) / y_true) * 100
+dados = pd.DataFrame({"t": t, "y RK4": y, "y exato": y_true, "Ept (%)": Ept})
 print(dados.to_string(index=False))
 print(f"Ept máximo: {np.max(Ept):.6f}%")
 

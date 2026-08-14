@@ -6,12 +6,12 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 
+def y_real(t):
+    return 4 / 1.3 * (np.exp(0.8 * t) - np.exp(-0.5 * t)) + 2 * np.exp(-0.5 * t)
+
+
 def f(t, y):
     return 4 * np.exp(0.8 * t) - 0.5 * y
-
-
-def sol(t):
-    return 4 / 1.3 * (np.exp(0.8 * t) - np.exp(-0.5 * t)) + 2 * np.exp(-0.5 * t)
 
 
 t_min = 0
@@ -20,7 +20,7 @@ y_t0 = 2
 hs = [1, 0.5, 0.1, 0.01]
 
 t_sol = np.linspace(t_min, t_max, 1000)
-y_sol = sol(t_sol)
+y_sol = y_real(t_sol)
 
 resultados = []
 
@@ -37,11 +37,11 @@ for h in hs:
         y[i + 1] = y[i] + h * f(t[i], y[i])
         t[i + 1] = t[i] + h
 
-    y_real = sol(t)
-    Ept = np.abs(np.abs(y_real - y) / y_real) * 100
+    y_true = y_real(t)
+    Ept = np.abs(np.abs(y_true - y) / y_true) * 100
 
     resultados.append(
-        {"h": h, "y(4) Euler": y[-1], "y(4) exato": y_real[-1], "Ept (%)": Ept[-1]}
+        {"h": h, "y(4) Euler": y[-1], "y(4) exato": y_true[-1], "Ept (%)": Ept[-1]}
     )
 
     plt.figure()
