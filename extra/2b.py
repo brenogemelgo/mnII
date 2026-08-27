@@ -57,4 +57,8 @@ plt.xlabel("t")
 plt.ylabel("$E_{\mathrm{pt}}$ [%]")
 plt.title("Erro percentual verdadeiro")
 
+erro = y - y_true
+Ep_rms_rel = 100.0 * np.sqrt(np.sum(erro**2) / np.sum(y_true**2))
+print(f"Erro percentual RMS global relativo: {Ep_rms_rel:.16} %")
+
 plt.show()
