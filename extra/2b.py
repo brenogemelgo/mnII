@@ -42,11 +42,19 @@ y_true = y_real(t)
 Ept = np.abs(np.abs(y_true - y) / y_true) * 100
 
 plt.figure()
+
 plt.plot(t_sol, y_sol, "-b", label="Solução exata")
 plt.plot(t, y, "-ok", label=f"Forward Euler, h = {h}")
 plt.xlabel("t")
 plt.ylabel("y")
 plt.title(r"$y' = (t-\mathrm{e})(t-\mathrm{pi})^2, \qquad t\,\in\,[0,2\pi]$")
 plt.legend()
+
+plt.figure()
+
+plt.plot(t, Ept, "-or")
+plt.xlabel("t")
+plt.ylabel("$E_{\mathrm{pt}}$ [%]")
+plt.title("Erro percentual verdadeiro")
 
 plt.show()

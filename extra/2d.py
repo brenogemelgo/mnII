@@ -36,8 +36,10 @@ y[0] = y_t0
 
 for i in range(n):
     k1 = f(t[i])
-    k2 = f(t[i] + h)
-    y[i + 1] = y[i] + 0.5 * h * (k1 + k2)
+    k2 = f(t[i] + 0.5 * h)
+    k3 = f(t[i] + 0.5 * h)
+    k4 = f(t[i] + h)
+    y[i + 1] = y[i] + h / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
     t[i + 1] = t[i] + h
 
 y_true = y_real(t)
@@ -45,10 +47,17 @@ Ept = np.abs(np.abs(y_true - y) / y_true) * 100
 
 plt.figure()
 plt.plot(t_sol, y_sol, "-b", label="Solução exata")
-plt.plot(t, y, "-ok", label=f"RK2, h = {h}")
+plt.plot(t, y, "-ok", label=f"RK4, h = {h}")
 plt.xlabel("t")
 plt.ylabel("y")
-plt.title(r"$y' = (t-\mathrm{e})(t-\mathrm{pi})^2, \qquad t\,\in\,[0,2\pi]$")
+plt.title(r"$y' = (t-\mathrm{e})(t-\pi)^2, \qquad t\,\in\,[0,2\pi]$")
 plt.legend()
+
+plt.figure()
+
+plt.plot(t, Ept, "-or")
+plt.xlabel("t")
+plt.ylabel("$E_{\mathrm{pt}}$ [%]")
+plt.title("Erro percentual verdadeiro")
 
 plt.show()
