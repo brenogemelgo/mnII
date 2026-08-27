@@ -24,8 +24,6 @@ h = np.pi / 4
 t_sol = np.linspace(t_min, t_max, 1000)
 y_sol = y_real(t_sol)
 
-resultados = []
-
 n = int((t_max - t_min) / h)
 
 t = np.zeros(n + 1)
