@@ -7,7 +7,7 @@
 # O cisalhamento gera calor: q(y) = mu * (du/dy)^2.
 # Na direção transversal, a equação de energia é:
 #
-# -k * d2T/dy2 = q(y)
+# d2T/dy2 = -q(y)/k
 #
 # Condições de contorno:
 #   T(0) = T_parede                      (temperatura prescrita)
@@ -25,12 +25,12 @@ pasta = Path(__file__).resolve().parent
 # -------------------------------------------------------------------
 # PARÂMETROS FÍSICOS
 # -------------------------------------------------------------------
-rho = 900.0  # kg/m3
-mu = 5.0  # Pa.s
+rho = 982.6  # kg/m3
+mu = 5.12  # Pa.s
 k = 0.13  # W/(m.K)
 H = 1.0e-3  # m
 U = 0.20  # m/s
-T_parede = 40.0  # Celsius
+T_parede = 60.0  # Celsius
 
 q_total = 12.0 * mu * U**2 / H
 fluxo_saida = 0.25 * q_total  # W/m2
@@ -48,11 +48,6 @@ lambida = 1.8
 # -------------------------------------------------------------------
 # ESCOAMENTO, DISSIPAÇÃO E SOLUÇÃO ANALÍTICA
 # -------------------------------------------------------------------
-def velocidade(y):
-    s = y / H
-    return 6.0 * U * s * (1.0 - s)
-
-
 def geracao(y):
     dud_y = (6.0 * U / H) * (1.0 - 2.0 * y / H)
     return mu * dud_y**2
@@ -71,29 +66,23 @@ def temperatura_exata(y, fluxo):
 # DIFERENÇAS FINITAS: SISTEMA TRIDIAGONAL A*T = d
 # -------------------------------------------------------------------
 def montar_sistema(n, fluxo):
-    dx = H / n
-    y = (np.arange(n) + 0.5) * dx
+    dy = H / n
+    y = (np.arange(n) + 0.5) * dy
 
-    # Células internas:
-    # -T[i-1] + 2*T[i] - T[i+1] = q(y[i])*dx**2/k
     a = np.full(n, -1.0)  # diagonal inferior
     b = np.full(n, 2.0)  # diagonal principal
     c = np.full(n, -1.0)  # diagonal superior
-    d = geracao(y) * dx**2 / k  # lado direito
+    d = geracao(y) * dy**2 / k  # lado direito
 
-    # Primeira célula: T[-1] = 2*T_parede - T[0]
-    # 3*T[0] - T[1] = q(y[0])*dx**2/k + 2*T_parede
     a[0] = 0.0
     b[0] = 3.0
     d[0] += 2.0 * T_parede
 
-    # Última célula: T[n] = T[n-1] - fluxo*dx/k
-    # -T[n-2] + T[n-1] = q(y[-1])*dx**2/k - fluxo*dx/k
     b[-1] = 1.0
     c[-1] = 0.0
-    d[-1] -= fluxo * dx / k
+    d[-1] -= fluxo * dy / k
 
-    return y, dx, a, b, c, d
+    return y, dy, a, b, c, d
 
 
 # -------------------------------------------------------------------
@@ -207,7 +196,6 @@ def tdma(a, b, c, d):
     Aum = np.hstack((A, d.reshape(-1, 1)))
     n = len(d)
 
-    # Eliminação progressiva na matriz aumentada tridiagonal.
     for i in range(n - 1):
         j = i + 1
         fator = Aum[j, i] / Aum[i, i]
@@ -215,7 +203,6 @@ def tdma(a, b, c, d):
         Aum[j, n] = Aum[j, n] - fator * Aum[i, n]
         Aum[j, i] = 0.0
 
-    # Substituição regressiva.
     x = np.zeros(n)
     x[n - 1] = Aum[n - 1, n] / Aum[n - 1, n - 1]
     for i in range(n - 2, -1, -1):
@@ -230,7 +217,7 @@ def tdma(a, b, c, d):
 # -------------------------------------------------------------------
 # PROGRAMA PRINCIPAL
 # -------------------------------------------------------------------
-y, dx, a, b, c, d = montar_sistema(N, fluxo_saida)
+y, dy, a, b, c, d = montar_sistema(N, fluxo_saida)
 T_exata = temperatura_exata(y, fluxo_saida)
 
 A = np.diag(b) + np.diag(a[1:], -1) + np.diag(c[:-1], 1)
@@ -239,7 +226,7 @@ b_sistema = d.copy()
 metodos = ["Jacobi", "Gauss-Seidel", "SOR", "TDMA"]
 iteracoes = []
 tempos = []
-erros_max = []
+erros_Ept_metodos = []
 
 for nome in metodos:
     inicio = perf_counter()
@@ -251,12 +238,13 @@ for nome in metodos:
         T, Epest, nit = gaussSeidelRelaxamento(A, b_sistema, Eppara, maxit, lambida)
     else:
         T = tdma(a, b, c, d)
-        nit = 1
+        nit = 0
 
     tempos.append(perf_counter() - inicio)
     iteracoes.append(nit)
-    erros_max.append(np.max(np.abs(T - T_exata)))
-    print(f"{nome:13s} | iterações: {nit:6d} | erro máx.: {erros_max[-1]:.6e} C")
+    Ept_metodo = 100 * np.mean(np.abs((T_exata - T) / T_exata))
+    erros_Ept_metodos.append(Ept_metodo)
+    print(f"{nome:13s} | iterações: {nit:6d} | " f"Ept: {Ept_metodo:.6e}%")
 
 T_num = tdma(a, b, c, d)  # usada nos gráficos e na convergência
 
@@ -267,15 +255,15 @@ print(f"Geração integrada exata = {q_total:.6f} W/m2")
 print(f"Fluxo prescrito em y=H = {fluxo_saida:.6f} W/m2")
 
 # Balanço energético da malha
-fluxo_esquerda = 2.0 * k * (T_num[0] - T_parede) / dx
-calor_gerado = np.sum(geracao(y)) * dx
+fluxo_esquerda = 2.0 * k * (T_num[0] - T_parede) / dy
+calor_gerado = np.sum(geracao(y)) * dy
 print(f"Balanço: q_esquerda + q_direita = {fluxo_esquerda + fluxo_saida:.6f} W/m2")
 print(f"         soma da geração nas células = {calor_gerado:.6f} W/m2")
 
 # -------------------------------------------------------------------
 # ESTUDO DE CONVERGÊNCIA DE MALHA (TDMA)
 # -------------------------------------------------------------------
-dxs = []
+dys = []
 erros_L2 = []
 erros_Ept = []
 
@@ -285,26 +273,18 @@ for n in malhas:
     Tex = temperatura_exata(yn, fluxo_saida)
     L2 = np.sqrt(np.mean((Tn - Tex) ** 2))
     Ept_n = 100 * np.mean(np.abs((Tex - Tn) / Tex))
-    dxs.append(h)
+    dys.append(h)
     erros_L2.append(L2)
     erros_Ept.append(Ept_n)
-    print(f"Malha N={n:3d} | dx={h:.4e} m | L2={L2:.6e} C | Ept={Ept_n:.6e}")
+    print(f"Malha N={n:3d} | dy={h:.4e} m | L2={L2:.6e} C | Ept={Ept_n:.6e}")
 
-ordem = np.polyfit(np.log(dxs), np.log(erros_L2), 1)[0]
+ordem = np.polyfit(np.log(dys), np.log(erros_L2), 1)[0]
 print(f"\nOrdem de convergência observada: {ordem:.4f}")
 
 # -------------------------------------------------------------------
 # ARQUIVOS .DAT E GRÁFICOS
 # -------------------------------------------------------------------
 y_liso = np.linspace(0.0, H, 400)
-
-np.savetxt(
-    pasta / "dats/escoamento.dat",
-    np.column_stack((y_liso * 1e3, velocidade(y_liso), geracao(y_liso))),
-    header="y_mm u_m_s geracao_W_m3",
-    comments="",
-    fmt="%.12e",
-)
 
 np.savetxt(
     pasta / "dats/temperatura_exata.dat",
@@ -338,34 +318,24 @@ np.savetxt(
 
 np.savetxt(
     pasta / "dats/convergencia.dat",
-    np.column_stack((malhas, dxs, erros_L2, erros_Ept)),
-    header="N dx_m erro_L2_C Ept",
+    np.column_stack((malhas, dys, erros_L2, erros_Ept)),
+    header="N dy_m erro_L2_C Ept",
     comments="",
     fmt="%.12e",
 )
 
 with open(pasta / "dats/metodos.dat", "w", encoding="utf-8") as arq:
-    arq.write("metodo iteracoes tempo_s erro_maximo_C\n")
-    for nome, nit, tempo, erro in zip(metodos, iteracoes, tempos, erros_max):
-        arq.write(f"{nome} {nit} {tempo:.12e} {erro:.12e}\n")
+    arq.write("metodo iteracoes tempo_s Ept\n")
+    for nome, nit, tempo, ept in zip(metodos, iteracoes, tempos, erros_Ept_metodos):
+        arq.write(f"{nome} {nit} {tempo:.12e} {ept:.12e}\n")
 
-# Velocidade e geração viscosa
-plt.figure()
-plt.plot(y_liso * 1e3, velocidade(y_liso))
-plt.xlabel(r"$y$ ($\mathrm{mm}$)")
-plt.ylabel(r"Velocidade ($\mathrm{m}/\mathrm{s}$)")
-plt.title("Perfil de Poiseuille")
-plt.grid()
-plt.tight_layout()
-# plt.savefig(pasta / "figuras/velocidade.png", dpi=200)
-
-plt.figure()
-plt.plot(y_liso * 1e3, geracao(y_liso))
-plt.xlabel(r"$y$ ($\mathrm{mm}$)")
-plt.ylabel(r"Geração de calor ($\mathrm{W}/\mathrm{m}^{3}$)")
-plt.title("Dissipação viscosa")
-plt.grid()
-plt.tight_layout()
+# plt.figure()
+# plt.plot(y_liso * 1e3, geracao(y_liso))
+# plt.xlabel(r"$y$ ($\mathrm{mm}$)")
+# plt.ylabel(r"Geração de calor ($\mathrm{W}/\mathrm{m}^{3}$)")
+# plt.title("Dissipação viscosa")
+# plt.grid()
+# plt.tight_layout()
 # plt.savefig(pasta / "figuras/geracao.png", dpi=200)
 
 plt.figure()
@@ -380,6 +350,14 @@ plt.tight_layout()
 # plt.savefig(pasta / "figuras/temperatura.png", dpi=200)
 
 plt.figure()
+plt.plot(y * 1e3, np.abs(T_exata - T_num), "-o", color="red", markersize=3)
+plt.xlabel(r"$y$ ($\mathrm{mm}$)")
+plt.ylabel(r"Erro absoluto (${}^{\circ}\mathrm{C}$)")
+plt.title("Erro absoluto da solução numérica")
+plt.grid()
+plt.tight_layout()
+
+plt.figure()
 for j, perfil in enumerate(perfis):
     plt.plot(y * 1e3, perfil, "-o", markersize=3, label=f"{100*fluxos[j]/q_total:.0f}%")
 plt.xlabel(r"$y$ ($\mathrm{mm}$)")
@@ -391,11 +369,11 @@ plt.tight_layout()
 # plt.savefig(pasta / "figuras/resfriamento.png", dpi=200)
 
 plt.figure()
-plt.loglog(dxs, erros_L2, "-o", label=r"Erro $L_2$")
+plt.loglog(dys, erros_L2, "-o", label=r"Erro $L_2$")
 plt.loglog(
-    dxs, erros_L2[0] * (np.array(dxs) / dxs[0]) ** 2, "--", label="Referência: ordem 2"
+    dys, erros_L2[0] * (np.array(dys) / dys[0]) ** 2, "--", label="Referência: ordem 2"
 )
-plt.xlabel(r"Tamanho da célula $\Delta x$ ($\mathrm{m}$)")
+plt.xlabel(r"Tamanho da célula $\Delta y$ ($\mathrm{m}$)")
 plt.ylabel(r"Erro $L_2$ (${}^{\circ}\mathrm{C}$)")
 plt.title(f"Convergência de malha (ordem = {ordem:.3f})")
 plt.legend()
@@ -404,7 +382,7 @@ plt.tight_layout()
 # plt.savefig(pasta / "figuras/convergencia.png", dpi=200)
 
 plt.figure()
-plt.bar(metodos, iteracoes)
+plt.bar(metodos[:3], iteracoes[:3])
 plt.ylabel("Iterações")
 plt.title(f"Comparação dos solucionadores (N={N})")
 plt.grid(axis="y")
