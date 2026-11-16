@@ -1,213 +1,226 @@
-import numpy as np
-import matplotlib.pyplot as plt
 from pathlib import Path
-from math import ceil
-
-
-def tdma(a, b, c, d):
-    b = b.copy()
-    d = d.copy()
-    n = len(b)
-
-    for i in range(1, n):
-        m = a[i-1] / b[i-1]
-        b[i] -= m * c[i-1]
-        d[i] -= m * d[i-1]
-
-    u = np.zeros(n)
-    u[-1] = d[-1] / b[-1]
-    for i in range(n-2, -1, -1):
-        u[i] = (d[i] - c[i] * u[i+1]) / b[i]
-    return u
-
-
-def sol(x, t):
-    u = np.zeros_like(x, dtype=float)
-    for m in range(1, 201, 2):
-        u += (4*u0 / (m*np.pi)) * np.sin(m*np.pi*x/L) * np.exp(-c2*(m*np.pi/L)**2*t)
-    return u
-
-
+import numpy as np
+from scipy.linalg import expm
 
 L = 50.0
-rho = 8.92
-cp = 0.092
-k = 0.95
-c2 = k / (rho * cp)
-u0 = 25.0
-uw = 0.0
-ue = 0.0
-T = 300.0
+RHO = 8.92
+CP = 0.092
+K = 0.95
+C2 = K / (RHO * CP)
+U_INI = 25.0
+U_W = U_E = 0.0
+T_FINAL = 300.0
 
+THETAS = (0.0, 0.5, 1.0)
+NX_PERFIS, NT_PERFIS = 40, 1200
+TEMPOS_PERFIS = (0.0, 30.0, 100.0, 300.0)
+NX_ESPACIAIS = (20, 40, 80, 160)
+NT_ESPACIAL = 500_000
+NT_TEMPORAIS = (1200, 2400, 4800, 9600)
+NT_ESTENDIDOS = (1200, 2400, 4800, 9600, 19200, 38400)
+NX_VIDEO, NT_VIDEO = 160, 12000
+SALVAR_CADA = 100
 
-nx_base = 40
-nt_base = 1200
-nx_lista = [20, 40, 80, 160]
-nt_lista = [1200, 2400, 4800, 9600]
-metodos = {0.0: 'FTCS', 0.5: 'CN', 1.0: 'BTCS'}
+OUT = Path(__file__).resolve().parent / 'data' / 'questao01'
+OUT.mkdir(parents=True, exist_ok=True)
 
+def analitica(x, t):
+    x = np.asarray(x, dtype=np.float64)
+    if t == 0.0:
+        return np.where((x > 0.0) & (x < L), U_INI, 0.0)
+    m = np.arange(1, 201, 2, dtype=np.float64)[:, None]
+    termos = (4.0 * U_INI / (m * np.pi)) * np.exp(-C2 * (m * np.pi / L)**2 * t)
+    return np.sum(termos * np.sin(m * np.pi * x[None, :] / L), axis=0)
 
-casos_espaciais = [(nx, ceil(c2*T / (0.20*(L/nx)**2))) for nx in nx_lista]
-casos_temporais = [(nx_base, nt) for nt in nt_lista]
-casos = list(dict.fromkeys([(nx_base, nt_base)] + casos_espaciais + casos_temporais))
+def ept_relativo(u, referencia):
+    return float(np.mean(np.abs((u - referencia) / referencia)))
 
-
-data = Path(__file__).resolve().parent / 'data' / 'questao01'
-data.mkdir(parents=True, exist_ok=True)
-
-resultados = {}
-historicos = {}
-instantaneos_cn = {}
-indices_snap = [0, nt_base//10, nt_base//3, nt_base]
-
-
-for nx, nt in casos:
+def avancar_theta(nx, nt, theta, passos_salvos):
     dx = L / nx
-    dt = T / nt
-    lam = c2 * dt / dx**2
-    x = (np.arange(nx) + 0.5) * dx
-    exata = sol(x, T)
+    dt = T_FINAL / nt
+    lam = C2 * dt / (dx * dx)
+    u = np.full(nx, U_INI, dtype=np.float64)
+    resultado = np.empty((len(passos_salvos), nx), dtype=np.float64)
 
-    for theta, nome in metodos.items():
-        if theta == 0.0 and lam > 0.25:
-            raise ValueError(f'FTCS instável: nx={nx}, nt={nt}, lambda={lam:.4f}')
+    sub = np.empty(nx - 1, dtype=np.float64)
+    sup_mod = np.empty(nx - 1, dtype=np.float64)
+    inv_diag = np.empty(nx, dtype=np.float64)
+    if theta > 0.0:
+        for i in range(nx - 1):
+            sub[i] = -theta * lam
+        sub[nx - 2] = -4.0 * theta * lam / 3.0
+        inv_diag[0] = 1.0 / (1.0 + 4.0 * theta * lam)
+        for i in range(nx - 1):
+            sup = -4.0 * theta * lam / 3.0 if i == 0 else -theta * lam
+            sup_mod[i] = sup * inv_diag[i]
+            diagonal = 1.0 + (4.0 if i + 1 == nx - 1 else 2.0) * theta * lam
+            inv_diag[i + 1] = 1.0 / (diagonal - sub[i] * sup_mod[i])
 
-        u = np.full(nx, u0)
-        if theta > 0.0:
-            a = np.full(nx-1, -theta*lam)
-            b = np.full(nx, 1 + 2*theta*lam)
-            c = np.full(nx-1, -theta*lam)
-            b[0] = b[-1] = 1 + 4*theta*lam
-            c[0] = a[-1] = -4*theta*lam/3
+    rhs = np.empty(nx, dtype=np.float64)
+    d_mod = np.empty(nx, dtype=np.float64)
+    u_novo = np.empty(nx, dtype=np.float64)
+    pos = 0
+    if len(passos_salvos) > 0 and passos_salvos[0] == 0:
+        resultado[0, :] = u
+        pos = 1
 
-        base = (nx, nt) == (nx_base, nt_base)
-        if base:
-            historico = np.empty(nt+1)
-            historico[0] = 0.5 * (u[nx//2-1] + u[nx//2])
-            if theta == 0.5:
-                instantaneos_cn[0] = u.copy()
+    fator = (1.0 - theta) * lam
+    for n in range(1, nt + 1):
+        rhs[0] = u[0] + fator * (-4.0 * u[0] + 4.0 * u[1] / 3.0)
+        rhs[1:-1] = u[1:-1] + fator * (u[:-2] - 2.0 * u[1:-1] + u[2:])
+        rhs[nx - 1] = u[nx - 1] + fator * (4.0 * u[nx - 2] / 3.0 - 4.0 * u[nx - 1])
 
-        for n in range(nt):
-            if theta == 0.0:
-                u_new = u.copy()
-                u_new[1:-1] = u[1:-1] + lam*(u[:-2] - 2*u[1:-1] + u[2:])
-                u_new[0] = u[0] + lam*(8*uw/3 - 4*u[0] + 4*u[1]/3)
-                u_new[-1] = u[-1] + lam*(4*u[-2]/3 - 4*u[-1] + 8*ue/3)
-                u = u_new
-            else:
-                
-                rhs = u.copy()
-                rhs[1:-1] += (1-theta)*lam*(u[:-2] - 2*u[1:-1] + u[2:])
-                rhs[0] += (1-theta)*lam*(-4*u[0] + 4*u[1]/3) + 8*lam*uw/3
-                rhs[-1] += (1-theta)*lam*(4*u[-2]/3 - 4*u[-1]) + 8*lam*ue/3
-                u = tdma(a, b, c, rhs)
+        if theta == 0.0:
+            u, u_novo = rhs, u
+            rhs = u_novo
+        else:
+            d_mod[0] = rhs[0] * inv_diag[0]
+            for i in range(1, nx):
+                d_mod[i] = (rhs[i] - sub[i - 1] * d_mod[i - 1]) * inv_diag[i]
+            u_novo[nx - 1] = d_mod[nx - 1]
+            for i in range(nx - 2, -1, -1):
+                u_novo[i] = d_mod[i] - sup_mod[i] * u_novo[i + 1]
+            u, u_novo = u_novo, u
 
-            if base:
-                historico[n+1] = 0.5 * (u[nx//2-1] + u[nx//2])
-                if theta == 0.5 and (n+1) in indices_snap:
-                    instantaneos_cn[n+1] = u.copy()
+        if pos < len(passos_salvos) and n == passos_salvos[pos]:
+            resultado[pos, :] = u
+            pos += 1
 
-        
-        Ept = np.mean(np.abs((exata-u)/exata))
-        resultados[(nx, nt, theta)] = (u.copy(), Ept)
-        if base:
-            historicos[theta] = historico
-        print(f'{nome:4s} nx={nx:3d} nt={nt:5d} lambda={lam:.5f} Ept={100*Ept:.5f}%')
+    return resultado
 
+def simular(nx, nt, theta, passos=(0,)):
+    lam = C2 * T_FINAL / (nt * (L / nx)**2)
+    if theta == 0.0 and lam > 0.25:
+        raise ValueError(f'FTCS: lambda={lam:.6g} excede limite conservador 1/4')
+    passos = np.asarray(passos, dtype=np.int64)
+    if len(passos) == 0 or passos[0] < 0 or passos[-1] > nt or np.any(np.diff(passos) <= 0):
+        raise ValueError('Passos salvos devem estar ordenados, sem repeticoes, em [0,Nt].')
+    return avancar_theta(nx, nt, theta, passos)
 
-x = (np.arange(nx_base) + 0.5) * (L/nx_base)
-u_exata = sol(x, T)
-u_ftcs = resultados[(nx_base, nt_base, 0.0)][0]
-u_cn = resultados[(nx_base, nt_base, 0.5)][0]
-u_btcs = resultados[(nx_base, nt_base, 1.0)][0]
-np.savetxt(data/'perfil_final.dat', np.column_stack((x, u_exata, u_ftcs, u_cn, u_btcs)),
-           header='x_cm analitica_C FTCS_C CN_C BTCS_C')
+def referencia_semidiscreta(nx):
+    dx = L / nx
+    D = np.diag(np.full(nx, -2.0))
+    D[0, 0] = D[-1, -1] = -4.0
+    for i in range(nx - 1):
+        D[i, i + 1] = 4.0 / 3.0 if i == 0 else 1.0
+        D[i + 1, i] = 4.0 / 3.0 if i == nx - 2 else 1.0
+    return expm((C2 * T_FINAL / dx**2) * D) @ np.full(nx, U_INI)
 
-tempo = np.linspace(0, T, nt_base+1)
+def salvar_tabela(nome, linhas, cabecalho):
+    array = np.asarray(linhas, dtype=np.float64)
+    np.savetxt(OUT / nome, array, fmt='%.12e', header=cabecalho)
+    return array
 
-centro_exato = np.array([sol(np.array([L/2]), t)[0] for t in tempo])
-centro_exato[0] = u0
-np.savetxt(data/'centro_tempo.dat', np.column_stack((tempo, centro_exato,
-           historicos[0.0], historicos[0.5], historicos[1.0])),
-           header='t_s analitica_C FTCS_C CN_C BTCS_C')
+def perfis():
+    x_ref = np.linspace(0.0, L, 1001)
+    salvar_tabela('perfis_analiticos_1001.dat',
+                  np.column_stack((x_ref, *[analitica(x_ref, t) for t in TEMPOS_PERFIS])),
+                  'x_cm u_an_t0 u_an_t30 u_an_t100 u_an_t300')
 
-np.savetxt(data/'evolucao_cn.dat', np.column_stack((x, *[instantaneos_cn[i] for i in indices_snap])),
-           header='x_cm CN_t0_C CN_t30_C CN_t100_C CN_t300_C')
+    x = (np.arange(NX_PERFIS) + 0.5) * L / NX_PERFIS
+    passos = [round(t * NT_PERFIS / T_FINAL) for t in TEMPOS_PERFIS]
+    estados = {th: simular(NX_PERFIS, NT_PERFIS, th, passos) for th in THETAS}
+    colunas = [x]
+    for j, t in enumerate(TEMPOS_PERFIS):
+        colunas.extend([analitica(x, t), *[estados[th][j] for th in THETAS]])
+    salvar_tabela('perfis_temporais.dat', np.column_stack(colunas),
+                  'x_cm [analitica FTCS CN BTCS]_t0,_t30,_t100,_t300')
+    print('Perfis (Ept em %, t=0,30,100,300 s):')
+    for j, t in enumerate(TEMPOS_PERFIS):
+        ref = analitica(x, t)
+        erros = [100 * ept_relativo(estados[th][j], ref) for th in THETAS]
+        print(f'  t={t:3g}: ' + ' '.join(f'{e:.6f}' for e in erros))
 
-linhas_nx = []
-for nx, nt in casos_espaciais:
-    lam = c2 * (T/nt) / (L/nx)**2
-    linhas_nx.append([nx, nt, lam] + [resultados[(nx, nt, th)][1] for th in metodos])
-linhas_nx = np.asarray(linhas_nx)
-np.savetxt(data/'erro_vs_nx.dat', linhas_nx,
-           header='nx nt lambda Ept_FTCS Ept_CN Ept_BTCS')
+def convergencia():
+    linhas_esp = []
+    for nx in NX_ESPACIAIS:
+        x = (np.arange(nx) + 0.5) * L / nx
+        ref = analitica(x, T_FINAL)
+        estados = [simular(nx, NT_ESPACIAL, th, (NT_ESPACIAL,))[0] for th in THETAS]
+        lam = C2 * T_FINAL / (NT_ESPACIAL * (L/nx)**2)
+        linhas_esp.append([nx, NT_ESPACIAL, lam] + [ept_relativo(u, ref) for u in estados])
+    esp = salvar_tabela('erro_vs_nx.dat', linhas_esp,
+                       'Nx Nt lambda Ept_FTCS Ept_CN Ept_BTCS ; referencia=PDE analitica ; Ept fracao')
 
-linhas_nt = []
-for nx, nt in casos_temporais:
-    lam = c2 * (T/nt) / (L/nx)**2
-    linhas_nt.append([nx, nt, lam] + [resultados[(nx, nt, th)][1] for th in metodos])
-linhas_nt = np.asarray(linhas_nt)
-np.savetxt(data/'erro_vs_nt.dat', linhas_nt,
-           header='nx nt lambda Ept_FTCS Ept_CN Ept_BTCS')
+    ref_sd = referencia_semidiscreta(NX_PERFIS)
+    x = (np.arange(NX_PERFIS) + 0.5) * L / NX_PERFIS
+    ref_pde = analitica(x, T_FINAL)
+    linhas_temporal = []
+    linhas_total = []
+    for nt in NT_ESTENDIDOS:
+        estados = [simular(NX_PERFIS, nt, th, (nt,))[0] for th in THETAS]
+        lam = C2 * T_FINAL / (nt * (L/NX_PERFIS)**2)
+        prefixo = [NX_PERFIS, nt, lam]
+        if nt in NT_TEMPORAIS:
+            linhas_temporal.append(prefixo + [ept_relativo(u, ref_sd) for u in estados])
+        linhas_total.append(prefixo + [ept_relativo(u, ref_pde) for u in estados])
+    puro = salvar_tabela('erro_vs_nt_temporal_puro.dat', linhas_temporal,
+                        'Nx Nt lambda Ept_t_FTCS Ept_t_CN Ept_t_BTCS ; referencia=semidiscreta ; fracao')
+    total = salvar_tabela('erro_vs_nt_estendido.dat', linhas_total,
+                         'Nx Nt lambda Ept_FTCS Ept_CN Ept_BTCS ; referencia=PDE analitica ; fracao')
 
+    print('Ordens espaciais (ajuste log-log FTCS, CN, BTCS):',
+          np.round([-np.polyfit(np.log(esp[:, 0]), np.log(esp[:, j]), 1)[0] for j in (3,4,5)], 4))
+    print('Ordens temporais (ajuste log-log FTCS, CN, BTCS):',
+          np.round([-np.polyfit(np.log(puro[:, 1]), np.log(puro[:, j]), 1)[0] for j in (3,4,5)], 4))
+    print(f'Limite espacial Ept = {100*ept_relativo(ref_sd, ref_pde):.9f}%')
+    return esp, puro, total
 
-plt.figure()
-xx = np.linspace(0, L, 500)
-plt.plot(xx, sol(xx, T), 'k-', label='Analítica')
-for theta, nome, estilo in [(0.0, 'FTCS', 'o--'), (0.5, 'Crank-Nicolson', 's--'), (1.0, 'BTCS', 'x--')]:
-    plt.plot(x, resultados[(nx_base, nt_base, theta)][0], estilo, ms=4, label=nome)
-plt.xlabel('x (cm)')
-plt.ylabel('Temperatura (°C)')
-plt.title(f'Perfil térmico em t={T:g} s')
-plt.grid(alpha=0.3)
-plt.legend()
-plt.tight_layout()
-plt.savefig(data/'perfil_final.png', dpi=170)
+def superficie_e_video():
+    passos = np.arange(0, NT_VIDEO + 1, SALVAR_CADA, dtype=np.int64)
+    estados = simular(NX_VIDEO, NT_VIDEO, 0.5, passos)
+    tempos = passos * (T_FINAL / NT_VIDEO)
+    x = (np.arange(NX_VIDEO) + 0.5) * L / NX_VIDEO
 
-plt.figure()
-plt.plot(tempo, centro_exato, 'k-', label='Analítica')
-for theta, nome in metodos.items():
-    plt.plot(tempo, historicos[theta], label=nome)
-plt.xlabel('Tempo (s)')
-plt.ylabel('Temperatura central (°C)')
-plt.title('Evolução da temperatura no centro')
-plt.grid(alpha=0.3)
-plt.legend()
-plt.tight_layout()
-plt.savefig(data/'centro_tempo.png', dpi=170)
+    idx_t = np.arange(0, len(passos), 2)
+    idx_x = np.arange(0, NX_VIDEO, 3)
+    arquivo = OUT / 'superficie_cn_pgfplots_56_tuniforme5.dat'
+    with arquivo.open('w', encoding='utf-8') as f:
+        for j in idx_t:
+            f.write(f'{0:.8f} {tempos[j]:.8f} {U_W:.12f}\n')
+            for i in idx_x:
+                f.write(f'{x[i]:.8f} {tempos[j]:.8f} {estados[j,i]:.12f}\n')
+            f.write(f'{L:.8f} {tempos[j]:.8f} {U_E:.12f}\n\n')
+    assert len(idx_x) + 2 == 56 and len(idx_t) == 61
+    print('Superficie 3D: 56 x 61 pontos:', arquivo)
 
-plt.figure()
-for i in indices_snap:
-    plt.plot(x, instantaneos_cn[i], 'o-', ms=3, label=f't={i*T/nt_base:g} s')
-plt.xlabel('x (cm)')
-plt.ylabel('Temperatura (°C)')
-plt.title('Evolução espacial — Crank-Nicolson')
-plt.grid(alpha=0.3)
-plt.legend()
-plt.tight_layout()
-plt.savefig(data/'evolucao_cn.png', dpi=170)
+    try:
+        import matplotlib
+        matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+        from matplotlib.animation import FuncAnimation, FFMpegWriter
+        from shutil import which
 
-plt.figure()
-for j, nome in enumerate(metodos.values(), start=3):
-    plt.loglog(linhas_nx[:, 0], linhas_nx[:, j], 'o-', label=nome)
-plt.xlabel('nx')
-plt.ylabel('Ept (adimensional)')
-plt.title('log(Ept) vs. log(nx), lambda ≈ 0,20')
-plt.grid(alpha=0.3, which='both')
-plt.legend()
-plt.tight_layout()
-plt.savefig(data/'erro_vs_nx.png', dpi=170)
+        if which('ffmpeg') is None:
+            print('ffmpeg ausente: dados gerados, animacao nao exportada.')
+            return
+        fig, ax = plt.subplots(figsize=(11, 2.6))
+        fig.subplots_adjust(left=0.085, right=0.86, bottom=0.30, top=0.75)
+        malha = ax.pcolormesh(np.linspace(0.0, L, NX_VIDEO + 1), [0.0, 1.0],
+                             estados[0][None, :], shading='flat', cmap='inferno',
+                             vmin=0, vmax=U_INI)
+        ax.set_xlim(0, L)
+        ax.set_yticks([])
+        ax.set_xlabel('Posicao x [cm]')
+        cb = fig.colorbar(malha, ax=ax, pad=0.02, fraction=0.04)
+        cb.set_label('Temperatura [°C]')
+        titulo = ax.set_title('t = 0 s')
 
-plt.figure()
-for j, nome in enumerate(metodos.values(), start=3):
-    plt.loglog(linhas_nt[:, 1], linhas_nt[:, j], 'o-', label=nome)
-plt.xlabel('nt')
-plt.ylabel('Ept (adimensional)')
-plt.title(f'log(Ept) vs. log(nt), nx={nx_base}')
-plt.grid(alpha=0.3, which='both')
-plt.legend()
-plt.tight_layout()
-plt.savefig(data/'erro_vs_nt.png', dpi=170)
+        def atualizar(i):
+            malha.set_array(estados[i].reshape(1, NX_VIDEO))
+            titulo.set_text(f't = {tempos[i]:.1f} s')
+            return malha, titulo
 
-plt.show()
-print(f'Arquivos .dat e .png exportados para: {data}')
+        anim = FuncAnimation(fig, atualizar, frames=len(tempos), interval=1000 / 24)
+        video = OUT / 'barra_temperatura_cn_latex.mp4'
+        anim.save(video, writer=FFMpegWriter(fps=24, bitrate=2000), dpi=120)
+        plt.close(fig)
+        print('Animacao:', video)
+    except (ImportError, RuntimeError, OSError) as e:
+        print('Dados e superficie exportados; nao foi possivel criar video:', e)
+
+if __name__ == '__main__':
+    perfis()
+    convergencia()
+    superficie_e_video()
+    print('Arquivos de apresentacao em:', OUT)
